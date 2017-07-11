@@ -79,7 +79,6 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, n_hidden):
 
     # Q-Values from a ladder network
     def q_values(state1, weights=None):
-        noise_std = 0.1
         layer_sizes = [N_DIM_STATE, n_hidden, n_hidden, N_DIM_ACTIONS]  # layer sizes
         L = len(layer_sizes) - 1  # number of layers
         shapes = [s for s in zip(layer_sizes[:-1], layer_sizes[1:])]  # shapes of linear layers
@@ -88,7 +87,7 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, n_hidden):
             return tf.Variable(inits * tf.ones([size]), name=name)
 
         def weight_init(shape, name):
-            return tf.Variable(tf.random_normal(shape) / math.sqrt(shape[0]), name=name)
+            return tf.Variable(tf.random_normal(shape, stddev=math.sqrt(shape[0])), name=name)
 
         if weights is None:
             weights = {
@@ -99,7 +98,7 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, n_hidden):
             }
 
         # Relative importance of each layer
-        denoising_cost = [1000.0, 10.0, 0.1, 0.1]
+        denoising_cost = [1.0, 0.25, 0.0, 0.0]
 
 
         def batch_normalization(batch, mean=None, var=None):
@@ -142,7 +141,7 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, n_hidden):
                     if noise_std > 0:
                         # Corrupted encoder
                         # batch normalization + noise
-                        z = batch_normalization(z_pre)
+                        z = batch_normalization(z_pre, m, v)
                         z += tf.random_normal(tf.shape(z_pre)) * noise_std
                     else:
                         # Clean encoder
@@ -176,7 +175,7 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, n_hidden):
             return h, d
 
         print("=== Corrupted Encoder ===")
-        y_c, corr = encoder(state1, noise_std)
+        y_c, corr = encoder(state1, 0.01)
 
         print("=== Clean Encoder ===")
         y, clean = encoder(state1, 0.0)  # 0.0 -> do not add noise
@@ -197,8 +196,8 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, n_hidden):
             a9 = wi(0., 'a9')
             a10 = wi(0., 'a10')
 
-            mu = a1 * tf.sigmoid(a2 * u + a3) + a4 * u + a5
-            v = a6 * tf.sigmoid(a7 * u + a8) + a9 * u + a10
+            mu = a1 * tf.sigmoid(a2 * (u + tf.constant(1e-9)) + a3) + a4 * u + a5
+            v = a6 * tf.sigmoid(a7 * (u + tf.constant(1e-9)) + a8) + a9 * u + a10
 
             z_est = (z_c - mu) * v + mu
             return z_est
@@ -210,7 +209,8 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, n_hidden):
             print("Layer ", l, ": ", layer_sizes[l+1] if l+1 < len(layer_sizes) else None,
                   " -> ", layer_sizes[l], ", denoising cost: ", denoising_cost[l])
             z, z_c = clean['z'][l], corr['z'][l]
-            m, v = clean['m'].get(l, 0), clean['v'].get(l, 1-1e-10)
+            m = clean['m'].get(l, 0)
+            v = clean['v'].get(l, 1-1e-10) + tf.constant(1e-9)
             if l == L:
                 u = y_c
             else:
@@ -224,17 +224,17 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, n_hidden):
         # calculate total unsupervised cost by adding the denoising cost of all layers
         unsupervised_cost = tf.add_n(d_cost)
 
-        return y_c, unsupervised_cost, bn_assigns, weights
+        return y, unsupervised_cost, bn_assigns, weights, None
 
     n_data = tf.shape(s1)[0]
 
     # DDQN - Find best value using the up to date Q function, but estimate it's value from our target Q function.
-    targets, _, bn_assigns, online_weights = q_values(s2)
+    targets, _, bn_assigns, target_weights, _ = q_values(s2)
     best_action = tf.argmax(targets, axis=1)
     # Cases when the second action is picked
     second_action_is_best = tf.cast(best_action, dtype=bool)
     # DDQN Pick action with Q_1, score with Q_target
-    ddqn_target_scores, _, _, target_weights = q_values(s2)
+    ddqn_target_scores, _, _, ddqn_target_weights, _ = q_values(s2)
     target_scores = tf.where(
         second_action_is_best,
         discount*ddqn_target_scores[:, 1],
@@ -247,23 +247,33 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, n_hidden):
 
     target_q_valuez = tf.concat([r1 + future_score, r1 + future_score], 1)
     all_ones = tf.concat([tf.ones([n_data, 1]), tf.ones([n_data, 1])], 1)
-    predicted_q_values, unsupervised_cost, _, _ = q_values(s1, online_weights)
+    predicted_q_values, _, _, online_weights, _ = q_values(s1)
     target_q_values = tf.where(
         tf.equal(a1, all_ones),
         target_q_valuez,
         predicted_q_values)
 
+    best_action_picker, u_loss, bn_assigns, _, tf_debug_var = q_values(s1, online_weights)
     supervised_loss = tf.reduce_mean(tf.square(tf.stop_gradient(target_q_values) - predicted_q_values))
-    loss = supervised_loss + unsupervised_cost
+    loss = supervised_loss + u_loss
+    training_vars = []
+    for w_key, weights in online_weights.items():
+        training_vars = training_vars + weights
     opt = tf.train.AdamOptimizer(learning_rate=learning_rate)
-    train_op = opt.minimize(loss)
-    best_action_picker, _, bn_assigns, online_weights = q_values(s1, online_weights)
+    train_op = opt.minimize(loss, var_list=training_vars)
+
+    target_updaters = []
+    for w_key, weights in online_weights.items():
+        for w_index in range(len(weights)):
+            target_updaters.append(
+                tf.assign(target_weights[w_key][w_index],
+                          online_weights[w_key][w_index]))
 
     updaters = []
     for w_key, weights in online_weights.items():
         for w_index in range(len(weights)):
             updaters.append(
-                tf.assign(target_weights[w_key][w_index],
+                tf.assign(ddqn_target_weights[w_key][w_index],
                           online_weights[w_key][w_index]))
 
     def updater(sess):
@@ -271,12 +281,13 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, n_hidden):
             sess.run(u)
 
     # add the updates of batch normalization statistics to train_step
-    bn_updates = tf.group(*bn_assigns)
+    network_updates = tf.group(*(bn_assigns + target_updaters))
     with tf.control_dependencies([train_op]):
-        train_op = tf.group(bn_updates)
+        train_op = tf.group(network_updates)
 
     return loss, \
            train_op, \
            best_action_picker, \
            updater, \
-           training
+           training, \
+           [supervised_loss, u_loss]
