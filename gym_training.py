@@ -71,13 +71,13 @@ for learning_rate in learning_rates:
             a1_tf = tf.placeholder("float", [None, N_DIM_ACTIONS], name='a1_inputs')
             r1_tf = tf.placeholder("float", [None, 1], name='r1_inputs')
             s2_tf = tf.placeholder("float", [None, N_DIM_STATE], name='s2_inputs')
+            layer_sizes = [N_DIM_STATE, n_hidden, n_hidden, N_DIM_ACTIONS]  # layer sizes
             if use_ladder:
                 loss, train_op, best_action_picker, updater, training, tf_debug = \
-                    ladder_mlp(s1_tf, a1_tf, r1_tf, s2_tf, DISCOUNT, learning_rate, n_hidden)
+                    ladder_mlp(s1_tf, a1_tf, r1_tf, s2_tf, DISCOUNT, learning_rate, layers)
             else:
-                tf_debug = None
-                loss, train_op, best_action_picker, updater, training = \
-                    ddqn_mlp(s1_tf, a1_tf, r1_tf, s2_tf, DISCOUNT, learning_rate, n_hidden)
+                loss, train_op, best_action_picker, updater, training, tf_debug = \
+                    ddqn_mlp(s1_tf, a1_tf, r1_tf, s2_tf, DISCOUNT, learning_rate, layers)
             sess.run(tf.global_variables_initializer())
             action_sampler = e_greedy_sampler(sess, best_action_picker, s1_tf, training)
             saver = tf.train.Saver()
