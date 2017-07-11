@@ -26,15 +26,15 @@ parser.add_argument('--lr', help='learning rates to try', metavar='N', type=floa
 parser.add_argument('--n_hidden', help='n hidden nodes', type=int)
 parser.add_argument('--dir', help='output directory')
 parser.add_argument('--use_ladder', dest='use_ladder', action='store_true')
+parser.add_argument('--experiments', help='To help batching experiments, comma separated list ' +\
+        'of experiment indexes', type=str)
 args = parser.parse_args()
 
 # Training - Setup
 DISCOUNT = 0.99
 N_EPISODES = 1000
-EXPERIMENTS_START_INDEX = 0
-EXPERIMENTS_STOP_INDEX = 25
 BATCH_SIZE = 16
-N_STEPS_BETWEEN_TARGET_UPDATES = 1000
+N_STEPS_BETWEEN_TARGET_UPDATES = 1
 N_EPISODES_PER_LOG = 20
 EXPERIENCE_REPLAY_BUFFER_SIZE = 5000
 learning_rates = [1e-3] if args.lr is None else args.lr
@@ -45,8 +45,12 @@ progress_dir = os.path.join('models', progress_dir)
 env = gym.make('CartPole-v000')
 start_time = time.time()
 encoded_actions = np.array([[1, 0], [0, 1]])
+experiment_indexes = [x for x in range(0, 25)]
+if args.experiments is not None:
+    experiment_indexes = [int(x) for x in args.experiments.split(',')]
+
 print('Using learning rates: %s' % str(learning_rates))
-print('Running experiments %s' % str([i for i in range(EXPERIMENTS_START_INDEX,EXPERIMENTS_STOP_INDEX)]))
+print('Running experiments %s' % str(experiment_indexes))
 print('Using network with %d hidden layers' % n_hidden)
 print('Using ladder network: %s' % use_ladder)
 print('#####################################################################################')
@@ -55,7 +59,7 @@ print('#########################################################################
 for learning_rate in learning_rates:
     print('Learning rate %f' % learning_rate)
     # Run the experiment 100 times to get a good training graph
-    for curr_experiment in range(EXPERIMENTS_START_INDEX, EXPERIMENTS_STOP_INDEX):
+    for curr_experiment in experiment_indexes:
         print('Running experiment %d... (%f s)' % (curr_experiment + 1, time.time() - start_time))
         test_lengths = np.zeros([int(N_EPISODES/N_EPISODES_PER_LOG)])
         lengths = np.zeros([int(N_EPISODES)])
@@ -83,7 +87,7 @@ for learning_rate in learning_rates:
             n_updates_since_updating_target_net = 0
             for curr_episode in range(0, N_EPISODES):
                 # Log current status
-                if (curr_episode+1) % 50 == 0:
+                if (curr_episode+1) % N_EPISODES_PER_LOG == 0:
                     print('Exp %d - ep. %d: test length (%f) train length (%f) loss (%f) %f s' %
                           (curr_experiment + 1,
                            curr_episode + 1,
@@ -117,7 +121,6 @@ for learning_rate in learning_rates:
                     # DDQN - Update the target network every N updates
                     n_updates_since_updating_target_net += 1
                     if n_updates_since_updating_target_net >= N_STEPS_BETWEEN_TARGET_UPDATES:
-                        print('  - Update target network')
                         n_updates_since_updating_target_net = 0
                         updater(sess)
 

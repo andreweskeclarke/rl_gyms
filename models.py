@@ -98,7 +98,7 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, n_hidden):
             }
 
         # Relative importance of each layer
-        denoising_cost = [1.0, 0.25, 0.0, 0.0]
+        denoising_cost = [10.0, 2.5, 0.0, 0.0]
 
 
         def batch_normalization(batch, mean=None, var=None):
@@ -175,7 +175,7 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, n_hidden):
             return h, d
 
         print("=== Corrupted Encoder ===")
-        y_c, corr = encoder(state1, 0.01)
+        y_c, corr = encoder(state1, 0.1)
 
         print("=== Clean Encoder ===")
         y, clean = encoder(state1, 0.0)  # 0.0 -> do not add noise
@@ -254,6 +254,7 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, n_hidden):
         predicted_q_values)
 
     best_action_picker, u_loss, bn_assigns, _, tf_debug_var = q_values(s1, online_weights)
+    u_loss = (u_loss * tf.constant(1/100))
     supervised_loss = tf.reduce_mean(tf.square(tf.stop_gradient(target_q_values) - predicted_q_values))
     loss = supervised_loss + u_loss
     training_vars = []
