@@ -26,6 +26,7 @@ parser.add_argument('--lr', help='learning rates to try', metavar='N', type=floa
 parser.add_argument('--n_hidden', help='n hidden nodes', type=int)
 parser.add_argument('--dir', help='output directory')
 parser.add_argument('--use_ladder', dest='use_ladder', action='store_true')
+parser.add_argument('--watch', dest='watch', action='store_true')
 parser.add_argument('--experiments', help='To help batching experiments, comma separated list ' +\
         'of experiment indexes', type=str)
 args = parser.parse_args()
@@ -41,10 +42,17 @@ learning_rates = [1e-3] if args.lr is None else args.lr
 n_hidden = 100 if args.n_hidden is None else args.n_hidden
 progress_dir = 'scratch' if args.dir is None else args.dir
 use_ladder = args.use_ladder
+watch = args.watch
 progress_dir = os.path.join('models', progress_dir)
-env = gym.make('CartPole-v000')
+# env = gym.make('CartPole-v000')
+env = gym.make('Enduro-v0')
 start_time = time.time()
-encoded_actions = np.array([[1, 0], [0, 1]])
+encoded_actions = []
+for action_index in range(N_DIM_ACTIONS):
+    a = np.zeros((N_DIM_ACTIONS), dtype=np.float32)
+    a[action_index] = 1.0
+    encoded_actions.append(a)
+encoded_actions = np.array(encoded_actions)
 experiment_indexes = [x for x in range(0, 25)]
 if args.experiments is not None:
     experiment_indexes = [int(x) for x in args.experiments.split(',')]
@@ -54,6 +62,10 @@ print('Running experiments %s' % str(experiment_indexes))
 print('Using network with %d hidden layers' % n_hidden)
 print('Using ladder network: %s' % use_ladder)
 print('#####################################################################################')
+
+
+def state_converter(state):
+    return np.mean(state, axis=(2)).flatten()
 
 # Repeat the experiment for different learning rates
 for learning_rate in learning_rates:
@@ -71,7 +83,8 @@ for learning_rate in learning_rates:
             a1_tf = tf.placeholder("float", [None, N_DIM_ACTIONS], name='a1_inputs')
             r1_tf = tf.placeholder("float", [None, 1], name='r1_inputs')
             s2_tf = tf.placeholder("float", [None, N_DIM_STATE], name='s2_inputs')
-            layer_sizes = [N_DIM_STATE, n_hidden, n_hidden, N_DIM_ACTIONS]  # layer sizes
+            # layers = [N_DIM_STATE, n_hidden, n_hidden, N_DIM_ACTIONS]
+            layers = [N_DIM_STATE, 1024, 128, 64, 32, N_DIM_ACTIONS]
             if use_ladder:
                 loss, train_op, best_action_picker, updater, training, tf_debug = \
                     ladder_mlp(s1_tf, a1_tf, r1_tf, s2_tf, DISCOUNT, learning_rate, layers)
@@ -101,10 +114,12 @@ for learning_rate in learning_rates:
                 done = False
                 curr_episode_length = 0
                 while not done:
-                    action = action_sampler(env.action_space, np.array(state, ndmin=2))
+                    action = action_sampler(env.action_space, np.array(state_converter(state), ndmin=2))
                     next_state, _, done, _ = env.step(action)
+                    if watch:
+                        env.render()
                     reward = -1 if done else 0
-                    experiences.append((state, encoded_actions[action, :], reward, next_state))
+                    experiences.append((state_converter(state), encoded_actions[action, :], reward, state_converter(next_state)))
                     curr_episode_length += 1
 
                     # Train network from experiences saved in the replay buffer
@@ -133,24 +148,25 @@ for learning_rate in learning_rates:
                     training: True
                 })
                 if curr_episode % N_EPISODES_PER_LOG == 0:
-                    if tf_debug is not None:
-                        print(sess.run(tf_debug, feed_dict={
-                            s1_tf: np.array([s1 for s1, a1, r1, s2 in experiences]),
-                            a1_tf: np.array([a1 for s1, a1, r1, s2 in experiences]),
-                            r1_tf: np.array([r1 for s1, a1, r1, s2 in experiences], ndmin=2).T,
-                            s2_tf: np.array([s2 for s1, a1, r1, s2 in experiences]),
-                            training: True
-                        }))
-                    _, episode_lengths, episode_rewards = \
-                        run_n_cartpole_simulations(
-                            100,
-                            greedy_sampler(sess, best_action_picker, s1_tf, training),
-                            env)
-                    test_lengths[int(curr_episode / N_EPISODES_PER_LOG)] = np.mean(np.array(episode_lengths))
-                    saved_progress_path = lr_filename(progress_dir, 'test_lengths_%d' % curr_experiment, learning_rate, 'npy')
-                    if not os.path.exists(os.path.dirname(saved_progress_path)):
-                        os.makedirs(os.path.dirname(saved_progress_path))
-                    np.save(saved_progress_path, test_lengths)
+                    pass
+                    # if tf_debug is not None:
+                    #     print(sess.run(tf_debug, feed_dict={
+                    #         s1_tf: np.array([s1 for s1, a1, r1, s2 in experiences]),
+                    #         a1_tf: np.array([a1 for s1, a1, r1, s2 in experiences]),
+                    #         r1_tf: np.array([r1 for s1, a1, r1, s2 in experiences], ndmin=2).T,
+                    #         s2_tf: np.array([s2 for s1, a1, r1, s2 in experiences]),
+                    #         training: True
+                    #     }))
+                    # _, episode_lengths, episode_rewards = \
+                    #     run_n_cartpole_simulations(
+                    #         25,
+                    #         greedy_sampler(sess, best_action_picker, s1_tf, training),
+                    #         env)
+                    # test_lengths[int(curr_episode / N_EPISODES_PER_LOG)] = np.mean(np.array(episode_lengths))
+                    # saved_progress_path = lr_filename(progress_dir, 'test_lengths_%d' % curr_experiment, learning_rate, 'npy')
+                    # if not os.path.exists(os.path.dirname(saved_progress_path)):
+                    #     os.makedirs(os.path.dirname(saved_progress_path))
+                    # np.save(saved_progress_path, test_lengths)
                     saved_model_path = os.path.join(progress_dir, 'best_model_%d' % np.mean(np.array(episode_lengths)))
                     if not os.path.exists(os.path.dirname(saved_model_path)):
                         os.makedirs(os.path.dirname(saved_model_path))

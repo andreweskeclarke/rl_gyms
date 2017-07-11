@@ -3,8 +3,10 @@ import math
 import numpy as np
 import tensorflow as tf
 
-N_DIM_ACTIONS = 2
-N_DIM_STATE = 4
+# N_DIM_STATE = 4
+# N_DIM_ACTIONS = 2
+N_DIM_STATE = 210*160
+N_DIM_ACTIONS = 9
 
 def batch_norm_init(inits, size, name):
     return tf.Variable(inits * tf.ones([size]), name=name)
@@ -45,8 +47,8 @@ def ddqn(s1, a1, r1, s2, discount, learning_rate, layers, q_values_fun_builder):
         tf.zeros(tf.shape(r1)),
         tf.reshape(target_scores, [-1, 1]))
 
-    target_q_valuez = tf.concat([r1 + future_score, r1 + future_score], 1)
-    all_ones = tf.concat([tf.ones([n_data, 1]), tf.ones([n_data, 1])], 1)
+    target_q_valuez = tf.concat([r1 + future_score for _ in range(N_DIM_ACTIONS)], 1)
+    all_ones = tf.concat([tf.ones([n_data, 1]) for _ in range(N_DIM_ACTIONS)], 1)
     predicted_q_values, _, _, online_weights, _ = q_values_fun_builder(s1, training)
     target_q_values = tf.where(
         tf.equal(a1, all_ones),
@@ -146,7 +148,7 @@ def ddqn_mlp(s1, a1, r1, s2, discount, learning_rate, layer_sizes):
         d['h'][l] = h
         return h, tf.Variable(tf.constant(0.0)), bn_assigns, weights, None
 
-    return ddqn(s1, a1, r1, s2, discount, learning_rate, layers, q_values)
+    return ddqn(s1, a1, r1, s2, discount, learning_rate, layer_sizes, q_values)
 
 
 # https://github.com/rinuboney/ladder/blob/master/ladder.py
@@ -277,4 +279,4 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, layer_sizes):
 
         return y, unsupervised_cost, bn_assigns, weights, None
     
-    return ddqn(s1, a1, r1, s2, discount, learning_rate, layers, q_values)
+    return ddqn(s1, a1, r1, s2, discount, learning_rate, layer_sizes, q_values)
