@@ -17,6 +17,8 @@ from file_utils import *
 
 config = tf.ConfigProto()
 config.gpu_options.allow_growth=True
+# config = tf.ConfigProto(gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=0.4))
+
 
 print('#####################################################################################')
 print('# Training')
@@ -36,7 +38,7 @@ DISCOUNT = 0.99
 N_EPISODES = 1000
 BATCH_SIZE = 16
 N_STEPS_BETWEEN_TARGET_UPDATES = 1
-N_EPISODES_PER_LOG = 20
+N_EPISODES_PER_LOG = 1
 EXPERIENCE_REPLAY_BUFFER_SIZE = 5000
 learning_rates = [1e-3] if args.lr is None else args.lr
 n_hidden = 100 if args.n_hidden is None else args.n_hidden
@@ -76,6 +78,7 @@ for learning_rate in learning_rates:
         test_lengths = np.zeros([int(N_EPISODES/N_EPISODES_PER_LOG)])
         lengths = np.zeros([int(N_EPISODES)])
         losses = np.zeros([int(N_EPISODES)])
+        rewards = np.zeros([int(N_EPISODES)])
         experiences = collections.deque(maxlen=EXPERIENCE_REPLAY_BUFFER_SIZE)
 
         with tf.Session(config=config) as sess:
@@ -84,10 +87,11 @@ for learning_rate in learning_rates:
             r1_tf = tf.placeholder("float", [None, 1], name='r1_inputs')
             s2_tf = tf.placeholder("float", [None, N_DIM_STATE], name='s2_inputs')
             # layers = [N_DIM_STATE, n_hidden, n_hidden, N_DIM_ACTIONS]
-            layers = [N_DIM_STATE, 1024, 128, 64, 32, N_DIM_ACTIONS]
+            layers = [N_DIM_STATE, 512, 128, 32, N_DIM_ACTIONS]
+            denoising_cost = [10.0, 2.5, 0.0, 0.0, 0.0]
             if use_ladder:
                 loss, train_op, best_action_picker, updater, training, tf_debug = \
-                    ladder_mlp(s1_tf, a1_tf, r1_tf, s2_tf, DISCOUNT, learning_rate, layers)
+                    ladder_mlp(s1_tf, a1_tf, r1_tf, s2_tf, DISCOUNT, learning_rate, layers, denoising_cost)
             else:
                 loss, train_op, best_action_picker, updater, training, tf_debug = \
                     ddqn_mlp(s1_tf, a1_tf, r1_tf, s2_tf, DISCOUNT, learning_rate, layers)
@@ -101,11 +105,12 @@ for learning_rate in learning_rates:
             for curr_episode in range(0, N_EPISODES):
                 # Log current status
                 if (curr_episode+1) % N_EPISODES_PER_LOG == 0:
-                    print('Exp %d - ep. %d: test length (%f) train length (%f) loss (%f) %f s' %
+                    print('Exp %d - ep. %d: test length (%f) train length (%f) reward (%f) loss (%f) %f s' %
                           (curr_experiment + 1,
                            curr_episode + 1,
                            test_lengths[int(curr_episode / N_EPISODES_PER_LOG)],
                            np.mean(lengths[curr_episode - N_EPISODES_PER_LOG:curr_episode]),
+                           rewards[curr_episode - 1],
                            losses[curr_episode - 1],
                            time.time() - start_time))
 
@@ -113,12 +118,14 @@ for learning_rate in learning_rates:
                 state = env.reset()
                 done = False
                 curr_episode_length = 0
+                curr_episode_reward = 0
                 while not done:
                     action = action_sampler(env.action_space, np.array(state_converter(state), ndmin=2))
-                    next_state, _, done, _ = env.step(action)
+                    next_state, reward, done, _ = env.step(action)
                     if watch:
                         env.render()
-                    reward = -1 if done else 0
+                    # reward = -1 if done else 0
+                    curr_episode_reward += reward
                     experiences.append((state_converter(state), encoded_actions[action, :], reward, state_converter(next_state)))
                     curr_episode_length += 1
 
@@ -140,6 +147,7 @@ for learning_rate in learning_rates:
                         updater(sess)
 
                 lengths[curr_episode] = curr_episode_length
+                rewards[curr_episode] = curr_episode_reward
                 losses[curr_episode] = sess.run(loss, feed_dict={
                     s1_tf: np.array([s1 for s1, a1, r1, s2 in experiences]),
                     a1_tf: np.array([a1 for s1, a1, r1, s2 in experiences]),
@@ -148,7 +156,6 @@ for learning_rate in learning_rates:
                     training: True
                 })
                 if curr_episode % N_EPISODES_PER_LOG == 0:
-                    pass
                     # if tf_debug is not None:
                     #     print(sess.run(tf_debug, feed_dict={
                     #         s1_tf: np.array([s1 for s1, a1, r1, s2 in experiences]),
@@ -167,13 +174,14 @@ for learning_rate in learning_rates:
                     # if not os.path.exists(os.path.dirname(saved_progress_path)):
                     #     os.makedirs(os.path.dirname(saved_progress_path))
                     # np.save(saved_progress_path, test_lengths)
-                    saved_model_path = os.path.join(progress_dir, 'best_model_%d' % np.mean(np.array(episode_lengths)))
+                    saved_model_path = os.path.join(progress_dir, 'best_model_%d' % np.mean(np.array(rewards[curr_episode])))
                     if not os.path.exists(os.path.dirname(saved_model_path)):
                         os.makedirs(os.path.dirname(saved_model_path))
                     saver.save(sess, saved_model_path)
 
         np.save(lr_filename(progress_dir, 'lengths_%d' % curr_experiment, learning_rate, 'npy'), lengths)
         np.save(lr_filename(progress_dir, 'losses_%d' % curr_experiment, learning_rate, 'npy'), losses)
+        np.save(lr_filename(progress_dir, 'rewards_%d' % curr_experiment, learning_rate, 'npy'), rewards)
         print('Saved! (%f)' % (time.time() - start_time))
 
 

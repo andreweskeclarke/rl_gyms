@@ -152,7 +152,7 @@ def ddqn_mlp(s1, a1, r1, s2, discount, learning_rate, layer_sizes):
 
 
 # https://github.com/rinuboney/ladder/blob/master/ladder.py
-def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, layer_sizes):
+def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, layer_sizes, denoising_cost):
     # Q-Values from a ladder network
     def q_values(state1, training, weights=None):
         L = len(layer_sizes) - 1  # number of layers
@@ -166,7 +166,6 @@ def ladder_mlp(s1, a1, r1, s2, discount, learning_rate, layer_sizes):
             }
 
         # Relative importance of each layer
-        denoising_cost = [10.0, 2.5, 0.0, 0.0]
         running_mean = [tf.Variable(tf.constant(0.0, shape=[l]), name='running_mean', trainable=False)
                         for l in layer_sizes[1:]]
         running_var = [tf.Variable(tf.constant(1.0, shape=[l]), name='running_var', trainable=False)
