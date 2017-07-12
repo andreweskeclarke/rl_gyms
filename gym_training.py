@@ -47,7 +47,7 @@ use_ladder = args.use_ladder
 watch = args.watch
 progress_dir = os.path.join('models', progress_dir)
 # env = gym.make('CartPole-v000')
-env = gym.make('Enduro-v0')
+env = gym.make('Breakout-v0')
 start_time = time.time()
 encoded_actions = []
 for action_index in range(N_DIM_ACTIONS):
@@ -119,12 +119,19 @@ for learning_rate in learning_rates:
                 done = False
                 curr_episode_length = 0
                 curr_episode_reward = 0
+                lives = 0
                 while not done:
+                    if curr_episode_length % 10 == 0:
+                        print(curr_episode_length)
                     action = action_sampler(env.action_space, np.array(state_converter(state), ndmin=2))
-                    next_state, reward, done, _ = env.step(action)
+                    next_state, reward, done, info = env.step(action)
                     if watch:
                         env.render()
-                    # reward = -1 if done else 0
+                    reward = reward - 10 if done else reward
+                    if info['ale.lives'] < lives:
+                        print('Life lost: %d (%d)' % (curr_episode_length, curr_episode_reward))
+                        lives = ['ale.lives']
+                        reward = reward - 5 
                     curr_episode_reward += reward
                     experiences.append((state_converter(state), encoded_actions[action, :], reward, state_converter(next_state)))
                     curr_episode_length += 1
